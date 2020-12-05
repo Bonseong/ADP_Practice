@@ -1,0 +1,289 @@
+---
+title: "ADP Practice 2"
+author: "Ku, Bonseong"
+date: '2020 12 6 '
+output: html_document
+---
+
+## 데이터, 패키지 로드
+
+```{r, warning=FALSE, message=FALSE}
+set.seed(12345)
+library(corrplot)
+library(lmtest)
+library(DMwR)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+library(e1071)
+library(ROCR)
+library(caret)
+library(tm)
+library(rJava)
+library(KoNLP)
+library(wordcloud)
+library(plyr)
+library(dplyr)
+
+adm<-read.csv('Admission.csv') #통계분석
+titan<-read.csv("titanic.csv") #정형 데이터마이닝
+moon<-readLines("연설문.txt")
+```
+
+
+## 통계분석
+```{r}
+str(adm)
+```
+```{r}
+sum(is.na(adm)) # 결측치 없음
+```
+### 상관분석
+```{r}
+cor(adm[-6])
+```
+```{r}
+cor.test(adm$Chance_of_Admit, adm$GRE)
+```
+- 입학 허가 확률과 GRE 점수는 0.8의 상관계수를 지니고 있다.
+- p-value<0.05 이므로 상관계수는 유의하다
+```{r}
+#cor.test(adm$Chance_of_Admit, adm$TOEFL)
+#cor.test(adm$Chance_of_Admit, adm$Univ_Rating)
+#cor.test(adm$Chance_of_Admit, adm$SOP)
+#cor.test(adm$Chance_of_Admit, adm$LOR)
+#cor.test(adm$Chance_of_Admit, adm$CGPA)
+```
+
+```{r}
+corrplot(cor(adm[,-6]),method="number")
+```
+- 상관계수 행렬의 숫자는 모두 양수이며, 그래프상의 산점도가 오른쪽으로 올라가는 직선의 형태를 지닌 것을 보아, 서로 양의 상관관계를 가지는 것을 확인할 수 있다.
+### 회귀분석
+```{r}
+adm_lm<-lm(Chance_of_Admit~.,data=adm)
+summary(adm_lm)
+```
+- 회귀분석 결과 상수항, GRE, TOEFL, LOR, GCPA 변수가 유의수준 0.05하에 통계적으로 유의하다는 것을 알 수 있다. 모형의 결정 계수는 0.8035로서 이 회귀모형은 전체 데이터의 약 80%를 설명하고 있다. 또한 회귀모형의 F통계량의 p-value는 <0.05로서 모형또한 유의하다.
+- 회귀모형의 추정식은 y = -1.260 + 0.001 * GRE + 0.003 * TOEFL + 0.006 * Univ_Rating - 0.003 * SOP + 0.022 * LOR + 0.119 * CGPA + 0.024 * Research 이다.
+
+```{r}
+step(adm_lm, direction='both')
+```
+- 이후 단계적 선택법을 통해 변수를 선택한다.
+- 첫 단계에서는 SOP 변수를 제거했을 때, AIC가 가장 낮은 것을 확인할 수 있다. 이와 같은 방법으로 AIC을 낮추는 방향으로 변수를 추가, 제거함으로써 가장 설명력이 높은 회귀모형을 선택한다.
+-최종적으로 GRE TOEFL LOR GCPA Research 변수를 선택한다.
+```{r}
+adm_lm2<-lm(Chance_of_Admit ~ GRE + TOEFL + LOR + CGPA + Research, data = adm)
+summary(adm_lm2)   
+```
+
+- Chance_of_Admit ~ GRE + TOEFL + LOR + CGPA + Research 모형이다.
+- 모든 변수가 통계적으로 유의하다.
+- 결정계수는 0.8027로서, 이 모형은 전체 데이터의 약 80%를 설명한다.
+- 모형의 F통계량에 대한 P-value는 <0.05로서 통계적으로 유의하다.
+- 최종 모형은 y = -1.298 + 0.008 * GRE + 0.003 * TOEFL + 0.022 * LOR + 0.121 + CGPA + 0.024 * RESEARCH 이다.
+
+### 잔차분석
+#### 독립성 검정
+```{r}
+dwtest(adm_lm2)
+```
+- 더빈왓슨 검정은 잔차에 대한 독립성을 검정한다.
+- DW 통계량이 0에 가깝다면 양의 자기상관이 있으며,
+- 2에 가깝다면 자기상관이 거의 없고,
+- 4에 가깝다면 음의 자기상관이 있음을 알 수 있다.
+- DW = 0.74991 로서 0에 가까우며, p-value < 0.05이므로 DW의 값에 따라 독립성 가정을 만족한다고 보기 어렵다.
+
+#### 정규성 가정
+```{r}
+shapiro.test(resid(adm_lm2))
+```
+- 샤피로 윌크 검정은 데이터 정규성을 가지는지에 대한 검정이다.
+- 이때 귀무가설은 주어진 데이터가 정규분포로부터의 표본이라는 것이다.
+- p-value < 0.05 이므로 귀무가설을 기각한다. 따라서 정규성을 만족한다고 보기 어렵다.
+
+#### 등분산성 검정
+```{r}
+par(mfrow=c(2,2))
+plot(adm_lm2)
+```
+
+- 좌측 윗그림은 잔차 vs 예측된 y값에 대한 분포이다. 그래프의 기울기를 나타내는 빨간색 선이 직선의 성향을 띄고 있기 때문에, 잔차는 평균이 0을 중심으로 고르게 분포함을 알 수 있다.
+- 우측 윗그림은 Q-Q Plot이다. 점선위에 점이 있다면 정규성을 만족한다고 하는데, 그림은 그렇지 않다. 따라서 정규성이 위배되는 것처럼 보인다.
+- Scale-Location은 등분산성 가정을 확인한다. 빨간선의 기울기가 x축과 거의 평행해야하지만, Fitted Values가 커질수록 감소하는 추세이다. 따라서 회귀직선이 y값을 잘 적합하지 못함을 알 수 있다.
+
+## 정형 데이터 마이닝
+```{r}
+summary(titan)
+```
+
+
+```{r}
+levels(titan$embarked)[1]<-NA # 결측치 처리
+table(titan$embarked,useNA="always") #useNA="always"는 NA 개수도 출력
+titan$cabin<-ifelse(titan$cabin=="",NA,titan$cabin)
+```
+```{r}
+str(titan) # 데이터 형식 변환
+titan$pclass<-as.factor(titan$pclass)
+titan$name<-as.character(titan$name)
+titan$ticket<-as.character(titan$ticket)
+titan$cabin<-as.character(titan$cabin)
+titan$survived<-factor(titan$survived,levels=c(0,1),labels=c("dead","survived"))
+```
+
+```{r}
+sum(complete.cases(titan)) #결측치 대체
+titan2<-centralImputation(titan)
+summary(titan2)
+sum(is.na(titan2))
+``` 
+```{r}
+titan2<-within(titan2,
+                 {
+                   age_1=integer(0)
+                   age_1[age>=0 & age<10]=0
+                   age_1[age>=10 & age<20]=1
+                   age_1[age>=20 & age<30]=2
+                   age_1[age>=30 & age<40]=3
+                   age_1[age>=40 & age<50]=4
+                   age_1[age>=50 & age<60]=5
+                   age_1[age>=60 & age<70]=6
+                   age_1[age>=70 & age<80]=7
+                   age_1[age>=80 & age<90]=8
+                 })
+
+titan2$age_1<-factor(titan2$age_1,levels=c(0,1,2,3,4,5,6,7,8),
+                       labels=c("10세 미만","10대","20대","30대","40대","50대","60대","70대","80대"))
+
+str(titan2)
+```
+
+```{r}
+set.seed(12345)
+idx<-sample(1:nrow(titan2),size=nrow(titan2)*0.7,replace=FALSE)
+train<-titan2[idx,]
+test<-titan2[-idx,]
+nrow(train)
+nrow(test)
+```
+```{r}
+titan_train<-train[,c("pclass","survived", "sex", "sibsp", "parch", "fare", "embarked")]
+titan_test<-test[,c("pclass","survived", "sex", "sibsp", "parch", "fare", "embarked")]
+```
+
+### 의사결정나무
+```{r}
+tree.fit <- rpart(survived~., method="class", data=titan_train, control = rpart.control(maxdepth=5, minsplit=15))
+tree.fit
+```
+```{r}
+prp(tree.fit,type=4,extra = 2)
+```
+```{r}
+pred_tree<-predict(tree.fit,titan_test[,-2],type='prob')
+head(pred_tree)
+```
+
+#### 의사결정나무 - 성과분석
+```{r}
+pred_tree2<-predict(tree.fit,titan_test[,-2],type='class')
+confusionMatrix(data=pred_tree2,reference=titan_test[,2],positive="survived")
+```
+
+```{r}
+pred.dt.roc<-prediction(as.numeric(pred_tree2),as.numeric(titan_test[,2]))
+plot(performance(pred.dt.roc,"tpr","fpr"))
+abline(a=0,b=1,lty=2,col="black")
+```
+```{r}
+performance(pred.dt.roc,"auc")@y.values
+```
+### 랜덤포레스트
+```{r}
+rf.fit<-randomForest(survived~.,data=titan_train)
+rf.fit
+```
+```{r}
+pred_rf<-predict(rf.fit, titan_test[,-2],type='prob')
+head(pred_rf)
+```
+#### 랜덤포레스트 - 성과분석
+```{r}
+pred_rf2<-predict(rf.fit,titan_test[,-2],type='class')
+confusionMatrix(data=pred_rf2,reference=titan_test[,2],positive="survived")
+```
+
+```{r}
+pred.rf.roc<-prediction(as.numeric(pred_rf2),as.numeric(titan_test[,2]))
+plot(performance(pred.rf.roc,"tpr","fpr"))
+abline(a=0,b=1,lty=2,col="black")
+```
+```{r}
+performance(pred.rf.roc,"auc")@y.values
+```
+
+
+### 나이브베이즈
+```{r}
+nv.fit<-naiveBayes(survived~.,data=titan_train)
+nv.fit
+```
+```{r}
+pred_nv<-predict(nv.fit, titan_test[,-2],type='raw')
+head(pred_nv)
+```
+#### 나이브베이즈 성과분석
+```{r}
+pred_nv2<-predict(nv.fit,titan_test[,-2],type='class')
+confusionMatrix(data=pred_nv2,reference=titan_test[,2],positive="survived")
+```
+
+```{r}
+pred.nv.roc<-prediction(as.numeric(pred_nv2),as.numeric(titan_test[,2]))
+plot(performance(pred.nv.roc,"tpr","fpr"))
+abline(a=0,b=1,lty=2,col="black")
+```
+```{r}
+performance(pred.nv.roc,"auc")@y.values
+```
+
+- 의사결정나무와 랜덤포레스트는 약 0.76, 나이브베이즈는 약 0.77로 0.01 더 높게 성능이 좋게 나왔다.
+- 데이터의 특성에 따라 정분류율, 특이도, 민감도 등을 잘 파악해 데이터에 가장 적합한 모형을 선택해야 한다.
+
+## 텍스트 마이닝
+```{r}
+clean_txt<-function(txt){
+  txt<-tolower(txt)             # 대, 소문자 변환
+  txt<-removePunctuation(txt)   # 구두점 제거
+  txt<-removeNumbers(txt)       # 숫자 제거
+  txt<-stripWhitespace(txt)     # 공백제거
+  
+  return(txt)
+}
+moon_1<-clean_txt(moon)
+
+head(moon_1)
+```
+
+```{r}
+moon_1<-clean_txt(moon)
+
+noun<-extractNoun(moon_1)                   #명사 추출
+wordcount<-table(unlist(noun))              
+cnoun<-as.data.frame(wordcount, stringsAsFactors = F)
+
+table.cnoun<-cnoun[nchar(cnoun$Var1)>=2,]   #단어 길이가 2 이상만 추출
+
+top_10<-table.cnoun %>% arrange(-Freq) %>% head(10)
+
+barplot(top_10$Freq,names=top_10$Var1, main="문재인 대통령 취임사 빈출 명사", 
+        xlab="단어",
+        ylab="빈도")
+```
+```{r}
+result<-table.cnoun %>% arrange(-Freq)
+
+t<-wordcloud(result$Var1,result$Freq,color=brewer.pal(6,"Dark2"),min.freq=2)
+```
