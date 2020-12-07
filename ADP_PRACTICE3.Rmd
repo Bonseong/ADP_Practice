@@ -1,0 +1,209 @@
+---
+title: "ADP Practice 3"
+author: "Ku, Bonseong"
+date: '2020 12 7 '
+output: html_document
+---
+
+## 데이터, 패키지 로드
+```{r, warning=FALSE, message=FALSE}
+library(ISLR)
+library(corrplot)
+library(caret)
+library(dplyr)
+library(tm)
+library(rJava)
+library(KoNLP)
+library(wordcloud)
+library(plyr)
+library(stringr)
+
+blog<-read.csv("공구 블로그 댓글.txt",sep="\t")
+bf<-read.csv('BlackFriday.csv')
+```
+
+### 통계분석
+```{r}
+car=Carseats
+sum(is.na(car))
+```
+#### 독립표본 t-test
+```{r}
+var.test(data=car, Sales~Urban, alternative='two.sided')
+```
+- Urban 변수에 따른 Sales의 차이 검증
+- 독립표본 t-test를 위해 두 집단간의 데이터가 등분산성을 만족하는지 확인함
+- 귀무가설 : 두 집단의 분산이 동일함 / 대립가설 : 두 집단의 분산이 동일하지 않음
+- p-value>0.05로 귀무가설을 채택함. 두 집단의 분산이 동일함.
+```{r}
+t.test(data=car, Sales~Urban, alternative='two.sided', var.equal=TRUE)
+```
+- 독립표본 t-test 수행 결과, t = 0.30765, df = 398, p-value = 0.7585 이다.
+- p-value>0.05이므로 귀무가설을 채택한다.
+- 따라서 도시지역과 도시가 아닌 지역간의 차 판매량의 차이는 통계적으로 유의하다라고 할 수 없다.
+
+### 상관분석
+```{r}
+cor(car[,-c(7,10,11)])
+```
+```{r}
+plot(car[,-c(7,10,11)])
+```
+
+```{r}
+cor.test(car$Sales, car$CompPrice) 
+```
+- sales 변수와 compprice 변수의 상관관계를 확인한 결과 p-value>0.05이므로 상관관계가 유의하다고 불 수 없다.
+
+```{r}
+corrplot(cor(car[,-c(7,10,11)]), method='number')
+```
+
+### 회귀분석
+```{r}
+car_lm<-lm(data=car, Sales~CompPrice+Income+Advertising+Population+Price+Age+Education)
+step(car_lm, direction = 'backward') #후진제거법
+```
+
+- 후진제거법을 사용해 AIC를 낮추는 방향으로 변수를 제거한다
+- fullmodel 에서 변수를 낮추는 방향으로 간다.
+- formula = Sales ~ CompPrice + Income + Advertising + Price + Age 이 최종모형이다.
+```{r}
+car_lm2<-lm(Sales ~ CompPrice + Income + Advertising + Price + Age, data = car)
+summary(car_lm2)
+
+```
+
+- 모든 변수의 p-value가 <0.05이므로 유의하다고 할 수 있다.
+- 이 회귀식의 결정계수는 0.54로서 전체 데이터의 54%를 설명한다.
+- f통계량에 대한 p-value는 <0.05로서 회귀모형은 통계적으로 유의하다.
+
+## 정형 데이터마이닝
+```{r}
+bf$Product_Category_2<-ifelse(is.na(bf$Product_Category_2)==TRUE,0,bf$Product_Category_2) # 결측치 대체
+bf$Product_Category_3<-ifelse(is.na(bf$Product_Category_3)==TRUE,0,bf$Product_Category_3)
+```
+```{r}
+bf$Product_all=bf$Product_Category_1+bf$Product_Category_2+bf$Product_Category_3
+
+```
+```{r}
+bf$User_ID<-as.character(bf$User_ID)
+bf$Occupation<-as.factor(bf$Occupation)
+bf$Marital_Status<-as.factor(bf$Marital_Status)
+bf$Product_Category_1<-as.factor(bf$Product_Category_1)
+bf$Product_Category_2<-as.factor(bf$Product_Category_2)
+bf$Product_Category_3<-as.factor(bf$Product_Category_3)
+```
+### 변수 더미화
+```{r}
+bf_1<-bf %>%
+  mutate(gender_num=as.numeric(Gender),
+         age_num=as.numeric(Age),
+         city_num=as.numeric(City_Category),
+         stay_num=as.numeric(Stay_In_Current_City_Years))
+
+dummy<-dummyVars(data=bf_1, "~Gender+Age+City_Category+Stay_In_Current_City_Years")
+
+new_df<-data.frame(predict(dummy, newdata=bf_1))
+bf_2<-cbind(bf, new_df)
+str(bf_2)
+```
+
+```{r}
+bf_cluster<-bf_2 %>%
+  select(-User_ID,-Product_ID,-Gender,-Age,-City_Category,-Stay_In_Current_City_Years,-Product_all)
+
+bf_cluster$Occupation<-as.numeric(bf_cluster$Occupation)
+bf_cluster$Marital_Status<-as.numeric(bf_cluster$Marital_Status)
+bf_cluster$Product_Category_1<-as.numeric(bf_cluster$Product_Category_1)
+bf_cluster$Product_Category_2<-as.numeric(bf_cluster$Product_Category_2)
+bf_cluster$Product_Category_3<-as.numeric(bf_cluster$Product_Category_3)
+
+str(bf_cluster)
+```
+```{r}
+wssplot <- function(data, nc = 15, seed = 1234) {
+  wss <- (nrow(data) - 1) * sum(apply(data, 2, var))
+  for (i in 2:nc) {
+    set.seed(seed)
+    wss[i] <- sum(kmeans(data, centers=i)$withinss)}
+  plot(1:nc, wss, type="b", xlab = "Number of Clusters",
+       ylab = "Within groups sum of squares")}
+
+wssplot(bf_cluster) #최적의 갯수 4개
+```
+```{r}
+bf_kmeans_4<-kmeans(bf_cluster,4)
+```
+
+```{r}
+clust<-bf_kmeans_4$cluster
+bf_full<-cbind(bf,clust)
+
+table(bf_full$clust)
+```
+- 클러스터 별 데이터 갯수
+```{r}
+xtabs(bf_full$clust ~ bf_full$Gender)
+```
+```{r}
+xtabs(~bf_full$clust + bf_full$Gender)
+```
+```{r}
+xtabs(bf_full$clust ~ bf_full$Age)
+```
+```{r}
+xtabs(~bf_full$clust + bf_full$Age)
+```
+```{r}
+aggregate(Purchase~clust, bf_full, mean) 
+```
+```{r}
+aggregate(Purchase~Age, bf_full, mean) 
+```
+```{r}
+aggregate(Purchase~Gender, bf_full, mean) 
+```
+
+## 비정형 데이터마이닝
+```{r}
+blog$Date<-as.character(blog$Date)
+blog$Date<-substr(blog$Date,1,10)
+blog
+```
+```{r}
+clean_txt<-function(txt){
+  txt<-tolower(txt)             # 대, 소문자 변환
+  txt<-removePunctuation(txt)   # 구두점 제거
+  txt<-removeNumbers(txt)       # 숫자 제거
+  txt<-stripWhitespace(txt)     # 공백제거
+  
+  return(txt)
+}
+blog$Content<-clean_txt(blog$Content)
+```
+```{r}
+doc<-as.character(blog$Content)
+pos<-paste(SimplePos09(doc))
+extracted<-str_match(pos,'([가-힣]+)/[P]')
+keyword<-extracted[,2]
+keyword[!is.na(keyword)]
+```
+```{r}
+blog$Date<-as.Date(blog$Date, format="%Y.%m.%d")
+blog$month<-as.numeric(format(blog$Date, "%m"))
+blog$month
+blog_2<-subset(blog,blog$month==2)
+```
+```{r}
+blog2_exN<-sapply(blog_2$Content,extractNoun)
+Noun<-as.vector(unlist(blog2_exN))
+Noun_2<-Noun[nchar(Noun)>=2]
+table.cnoun<-head(sort(table(Noun_2),decreasing=T),5)
+```
+```{r}
+colors<-rainbow(5)
+pie(table.cnoun, main="2월 댓글 빈출 명사",col=colors)
+legend("right",names(table.cnoun),fill=colors)
+```
